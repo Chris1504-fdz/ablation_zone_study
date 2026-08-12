@@ -1,8 +1,29 @@
 # Ablation Zone Study — Composite Formulation Analysis & Optimization
 
 Statistical analysis and multi-objective Bayesian optimization (MOBO) of an ablative
-composite material (carbon black + Fe-rich regolith filler), based on ablation
-experiments from the UIC–NU collaboration.
+composite material (carbon black + Fe-rich regolith filler), a UIC–Northwestern
+collaboration (MIRO project). NU builds the models and recommends formulations;
+UIC fabricates and tests them.
+
+## Repository Structure
+
+```
+ablation_zone_study/
+├── README.md
+├── data/
+│   └── ablation_data.xlsx            # Raw replicate data (1 row = 1 measurement)
+├── notebooks/
+│   ├── ablation_analysis.ipynb       # ANOVA, regression, heteroscedastic MOGP
+│   ├── mobo_analysis.ipynb           # MOBO v1 (data hard-coded inline) — frozen reference
+│   └── mobo_analysis_v2.ipynb        # MOBO v2 (reads data/ablation_data.xlsx) — active version
+├── slides/
+│   ├── Ablation Preliminary Experiment Study 06252026.pptx
+│   ├── ablation_study.pptx           # Slides for the statistical analysis
+│   └── mobo_results.pptx             # Slides for the MOBO results
+└── resources/
+    ├── email.pdf                     # NU–UIC email thread (Jul 2026): recommendation + test results
+    └── data for nw yinong.docx       # Experimental data document from UIC
+```
 
 ## Problem Setup
 
@@ -14,81 +35,80 @@ experiments from the UIC–NU collaboration.
 | **Output Y2** | Backside temperature (minimize) | °C |
 | **Output Y3** | Density (minimize) | g/cm³ |
 
-All three objectives are conflicting: increasing carbon black lowers ablation rate and
-backside temperature but raises density, so there is no single best formulation — the
-goal is to map the Pareto front.
+The three objectives conflict (more carbon black → less ablation and lower backside
+temperature, but higher density), so the goal is to map the Pareto front with as few
+experiments as possible.
 
 ## Data
 
-`ablation_data.xlsx` — **39 measurements: 13 unique formulations × 3 replicates.**
-The design covers X1 ∈ {5, 7.5, 10, 12.5, 15, 20} and X2 ∈ {1, 2, 3, 4, 5} (13
-combinations, unbalanced/D-optimal style). Both notebooks also carry this data inline,
-so they run without the spreadsheet. The MOBO notebook works with the 13 per-condition
-means; the analysis notebook uses all 39 replicates.
+`data/ablation_data.xlsx` — **39 measurements: 13 unique formulations × 3 replicates**
+(initial DOE). The MOBO notebooks train on per-condition means; the analysis notebook
+uses all replicates.
+
+**To add new experiments:** append one row per replicate to the spreadsheet and re-run
+`notebooks/mobo_analysis_v2.ipynb` top to bottom. Everything (GP fit, Pareto front,
+hypervolume, next-sample recommendation) updates automatically.
 
 ## Notebooks
 
-The two notebooks answer different questions on the same data:
+- **`ablation_analysis.ipynb` — "What does the data tell us?"** Design orthogonality
+  checks, two-way ANOVA (carbon black dominates ablation rate), quadratic regression
+  per output, and a heteroscedastic multi-output GP (GPyTorch, ICM kernel) capturing
+  inter-task correlations. Data is inline; unaffected by spreadsheet updates.
 
-- **`ablation_analysis.ipynb` — "What does the data tell us?"** (inference/modeling)
-  - Design-matrix orthogonality check (condition number, correlation of X'X)
-  - Two-way ANOVA per output → X1 (carbon black) is the dominant factor for ablation
-    rate; both factors significantly affect all three responses
-  - Quadratic linear regression per output, with parity plots and response surfaces
-    (Y1 strong fit, Y2 moderate, Y3 nearly deterministic)
-  - Heteroscedastic multi-output GP (GPyTorch, ICM kernel) — learns inter-task
-    correlations and per-output noise; compared against the linear models
+- **`mobo_analysis.ipynb` (v1) — frozen reference.** The original MOBO notebook with
+  data hard-coded inline. This is the notebook that produced the recommendation sent
+  to UIC on Jul 10, 2026 (Section 4: X1 = 19.579, X2 = 1.986, qLogEHVI = 0.785). Kept
+  unchanged for provenance.
 
-- **`mobo_analysis.ipynb` — "Which formulation should we test next?"** (optimization)
-  - BoTorch surrogates: independent `SingleTaskGP` per objective (`ModelListGP`)
-  - Acquisition: `qLogExpectedHypervolumeImprovement`, batch size q = 2
-  - Pareto front / hypervolume tracking, candidate recommendation, preference-weighted
-    ranking of Pareto solutions
+- **`mobo_analysis_v2.ipynb` (v2) — active version.** Identical pipeline
+  (BoTorch `ModelListGP` of independent `SingleTaskGP`s, qLogEHVI acquisition), but
+  loads `../data/ablation_data.xlsx` instead of inline data, and adds Section 10
+  reproducing the GP prediction table emailed to UIC on Jul 18, 2026. Runs on the
+  `ml_gp_env` Jupyter kernel (the base anaconda env has a broken statsmodels/scipy
+  pairing).
 
-## Optimization Status (as of Aug 2026)
+### v1 ↔ v2 consistency (verified Aug 12, 2026, on the original 39-point dataset)
 
-**The MOBO loop is an in-silico demonstration — no new physical experiments have been
-run yet.** New candidate evaluations are answered by a quadratic response-surface
-"oracle" fit to the existing 39 points (R²: Y1 = 0.92, Y2 = 0.74, Y3 = 1.00), standing
-in for real fabrication + testing.
+| Quantity | v1 | v2 | Rick's email |
+|---|---|---|---|
+| Initial hypervolume | 51.1684 | 51.1684 | 51.168 |
+| Recommended sample (Sec. 4) | X1=19.579, X2=1.986 | X1=19.579, X2=1.986 | 19.58 / 1.99 → tested as 19.6 / 2.0 |
+| qLogEHVI at recommendation | 0.7850 | 0.7850 | 0.785 |
+| GP prediction at (19.58, 1.99) | — | Y1 5.964±1.028, Y2 177.85±1.43, Y3 1.2157±0.0008 | Y1 5.968±1.026, Y2 177.67±1.43, Y3 1.2160±0.0008 |
 
-Simulated campaign: 5 iterations × 2 candidates = 10 evaluations added to the 13
-initial points (23 total). Hypervolume improved **51.17 → 56.05 (+9.5%)**; Pareto
-front grew from 12 to 20 solutions.
+The **simulated** 5-iteration BO loop (Sections 6–7, which uses a regression oracle in
+place of real experiments) matches v1 at iteration 1 and then drifts slightly
+(final HV 56.03 vs 56.05) due to library-version/RNG differences in the multi-restart
+acquisition optimizer. This loop is a demonstration only and is superseded by the real
+campaign below.
 
-### Proposed candidates (oracle-evaluated, original scale)
+## Campaign Status (as of Aug 2026)
 
-| Iter | Candidate 1 (X1, X2) | Candidate 2 (X1, X2) |
-|---|---|---|
-| 1 | (17.08, 1.24) | (20.00, 1.95) |
-| 2 | (20.00, 3.87) | (19.45, 1.73) |
-| 3 | (14.24, 1.77) | (20.00, 2.42) |
-| 4 | (16.69, 4.83) | (18.07, 1.51) |
-| 5 | (5.00, 2.49) | (7.33, 3.04) |
+**One real BO iteration is complete** (see `resources/email.pdf`):
 
-For a **real** next experiment, only the first batch is actionable (later iterations
-depend on oracle feedback): the acquisition function points to **high carbon black
-(≈17–20 wt%) with low regolith (≈1–2 wt%)** — e.g. the single-point recommendation
-X1 = 19.58, X2 = 1.99 wt%. These trade slightly higher density for the lowest ablation
-rates (~5.5 µm/s) and backside temperatures (~175–190 °C) on the predicted front.
+1. **Jul 10** — NU (Rick Tsai) recommended X1 = 19.58, X2 = 1.99 (EHVI = 0.785),
+   rounded to **carbon black 19.6 wt%, regolith 2.0 wt%** (full formulation also:
+   I-369 2 wt%, resin 76.4 wt%).
+2. **Jul 18** — GP predictions sent: Y1 = 5.968 ± 1.026 µm/s, Y2 = 177.67 ± 1.434 °C,
+   Y3 = 1.2160 ± 0.0008 g/cm³.
+3. **Jul 20** — UIC (Yinong Chen) tested 3 replicates: **Y1 = 5.65 / 5.68 / 6.27 µm/s,
+   Y2 = 187 / 178 / 182 °C, Y3 = 1.216 g/cm³** — the lowest ablation rates observed
+   in the campaign. Y1 and Y3 landed inside the predicted intervals; Y2 was
+   under-predicted (2 of 3 replicates above the 95% CI).
+4. **Jul 21** — Updated front: **hypervolume 51.168 → 53.240, 14 Pareto solutions.**
+   Project handed over from Rick Tsai to Christian Fernandez.
 
-### Next steps (from the notebook)
+**⚠ The July sample has NOT yet been added to `data/ablation_data.xlsx`** — the
+spreadsheet still holds only the initial 13 conditions. Next steps:
 
-- Fabricate and test BO-recommended formulations (replace oracle with real data)
-- Add constraints (e.g. density < 1.25 g/cm³)
-- Consider LVGP for mixed/qualitative variables, heteroscedastic per-replicate noise
+- Append the 3 new replicate rows (19.6, 2.0, …) to the spreadsheet.
+- Re-run `mobo_analysis_v2.ipynb` to refit the GPs and generate the next
+  recommended sample for UIC.
+- Consider a better noise model for Y2 (backside temp), which the GP under-covered.
 
-## Files
+## Dependencies
 
-| File | Description |
-|---|---|
-| `ablation_data.xlsx` | Raw experimental data (39 rows) |
-| `ablation_analysis.ipynb` | ANOVA, regression, heteroscedastic MOGP analysis |
-| `mobo_analysis.ipynb` | Multi-objective BO (qLogEHVI) with simulated loop |
-| `ablation_study.pptx` | Slides for the statistical analysis |
-| `mobo_results.pptx` | Slides for the MOBO results |
-| `Ablation Preliminary Experiment Study 06252026.pptx` | Preliminary experiment study (June 2026) |
-| `data for nw yinong.docx` | Experimental data document from collaborator |
-
-**Dependencies:** numpy, pandas, matplotlib, seaborn, statsmodels, scikit-learn,
-torch, gpytorch, botorch.
+numpy, pandas, openpyxl, matplotlib, seaborn, statsmodels, scikit-learn, torch,
+gpytorch, botorch. Use the `ml_gp_env` kernel (Python 3.13, botorch 0.14) for the
+notebooks.
